@@ -1,0 +1,27 @@
+%% UTT Connect - Flujo de autenticación con magic link
+%% Fuente editable del diagrama incluido en README.md
+sequenceDiagram
+    autonumber
+    actor U as Usuario
+    participant FE as Angular (SPA)
+    participant BE as NestJS · Auth Service
+    participant FB as Firebase Auth
+    participant DB as PostgreSQL
+    participant AU as Audit Service
+
+    U->>FE: Ingresa correo institucional @utt.edu.mx
+    FE->>BE: POST /auth/magic-link
+    BE->>DB: Registra solicitud (magic_link_requests)
+    BE-->>U: Envía enlace de acceso por correo
+    U->>FB: Abre el enlace de acceso
+    FB-->>FE: Callback con token de identidad
+    FE->>BE: Envía token al backend
+    BE->>FB: Valida el token
+    FB-->>BE: Token válido
+    BE->>DB: Upsert usuario + identidad (transacción)
+    BE->>DB: Marca el enlace como consumido
+    BE->>DB: Resuelve rol y permisos (RBAC)
+    BE->>AU: Registra evento de inicio de sesión
+    AU->>DB: Inserta en audit_events
+    BE-->>FE: Sesión + rol
+    FE-->>U: Dashboard según rol

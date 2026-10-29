@@ -1,0 +1,21 @@
+%% UTT Connect - Modelo entidad-relación (PostgreSQL)
+%% Fuente editable del diagrama incluido en README.md
+%% Nota: se representan únicamente entidades y relaciones descritas en la
+%% documentación fuente. El detalle de atributos se documenta en el
+%% diccionario de datos (sección 19 del README).
+erDiagram
+    USERS ||--o{ USER_IDENTITIES : "posee"
+    IDENTITY_PROVIDERS ||--o{ USER_IDENTITIES : "respalda"
+    USER_STATUSES ||--o{ USERS : "define estado"
+
+    USERS ||--o{ USER_ROLES : "tiene"
+    ROLES ||--o{ USER_ROLES : "se asigna"
+    ROLES ||--o{ ROLE_PERMISSIONS : "agrupa"
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : "se concede"
+
+    USERS ||--o{ MAGIC_LINK_REQUESTS : "solicita"
+    MAGIC_LINK_STATUSES ||--o{ MAGIC_LINK_REQUESTS : "clasifica"
+
+    USERS ||--o{ AUDIT_EVENTS : "genera"
+    MAGIC_LINK_REQUESTS ||--o{ AUDIT_EVENTS : "referencia"
+    AUDIT_EVENT_TYPES ||--o{ AUDIT_EVENTS : "clasifica"

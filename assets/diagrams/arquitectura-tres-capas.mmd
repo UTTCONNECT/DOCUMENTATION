@@ -1,0 +1,32 @@
+%% UTT Connect - Arquitectura en tres capas (Three-Tier) + SPA
+%% Fuente editable del diagrama incluido en README.md
+flowchart TB
+    subgraph P["Capa de Presentación · Angular (SPA)"]
+        A1["Landing Page y FAQ"]
+        A2["Muro de Avisos"]
+        A3["Módulo de Chat"]
+        A4["Dashboard administrativo"]
+    end
+
+    subgraph N["Capa de Lógica de Negocio · NestJS"]
+        B1["Auth Service<br/>JWT · OTP · magic link"]
+        B2["User & RBAC Service"]
+        B3["Avisos y Departamentos"]
+        B4["Gateway WebSockets"]
+        B5["Audit Service"]
+    end
+
+    subgraph D["Capa de Persistencia · PostgreSQL"]
+        C1[("users · roles · permissions")]
+        C2[("avisos · departamentos")]
+        C3[("conversaciones · mensajes")]
+        C4[("audit_events")]
+    end
+
+    EXT["Servicios cloud<br/>Firebase Auth · FCM · Storage · AWS S3"]
+
+    P -->|"HTTP / REST · JSON"| N
+    P <-->|"WebSockets"| B4
+    N --> D
+    B1 --> EXT
+    B4 --> EXT
