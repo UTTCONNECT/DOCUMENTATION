@@ -1013,9 +1013,27 @@ Ambos repositorios de desarrollo contienen la evidencia de la colaboración, ref
 
 ## 19. Diccionario de datos
 
-El diccionario de datos detalla la estructura principal de la base de datos para garantizar la integridad referencial y cumplir con el diseño relacional propuesto.
+El diccionario de datos detalla la estructura principal de la base de datos para garantizar la integridad referencial y cumplir con el diseño relacional propuesto. El esquema se compone de **12 tablas**, dos extensiones de PostgreSQL y dos funciones de trigger.
 
-### 19.1 Entidades por dominio
+> 📘 **Guía complementaria:** para una explicación didáctica del esquema (cómo leer una definición SQL, mapa de tablas, flujo de autenticación y consultas de práctica), consulta [`docs/explicacion-base-de-datos.md`](docs/explicacion-base-de-datos.md) o su versión PDF [`Explicacion-Base-de-Datos-UTT-Connect.pdf`](Explicacion-Base-de-Datos-UTT-Connect.pdf).
+
+### 19.1 Extensiones y funciones globales
+
+#### Extensiones habilitadas
+
+| Extensión | Descripción | Uso en el esquema |
+|---|---|---|
+| **`pgcrypto`** | Proporciona funciones criptográficas para PostgreSQL. | Generación de identificadores únicos UUIDv4 vía `gen_random_uuid()`. |
+| **`citext`** | Tipo de cadena insensible a mayúsculas/minúsculas (*case-insensitive*). | Validación e indexación de correos electrónicos (`email`, `provider_email`). |
+
+#### Funciones y triggers personalizados
+
+| Nombre de función | Tipo | Descripción / regla de negocio |
+|---|---|---|
+| **`set_updated_at()`** | Trigger Function | Asigna `now()` a la columna `updated_at` antes de actualizar un registro (`users`, `roles`). |
+| **`prevent_user_email_change()`** | Trigger Function | **Inmutabilidad de correo (RF-09, R12):** evita la modificación del campo `email` en la tabla `users` si este ya fue verificado (`email_verified_at IS NOT NULL`). |
+
+### 19.2 Resumen del esquema
 
 | Dominio | Entidad | Descripción |
 |---|---|---|
@@ -1025,24 +1043,240 @@ El diccionario de datos detalla la estructura principal de la base de datos para
 | **RBAC** | `roles` | Catálogo de roles del sistema: Lector, Departamento y Administrador. |
 | **RBAC** | `permissions` | Catálogo de permisos atómicos del sistema. |
 | **RBAC** | `role_permissions` | Asignación de permisos a roles. |
-| **RBAC** | `user_roles` | Asignación de roles a usuarios. |
+| **RBAC** | `user_roles` | Asignación de roles a usuarios, con soporte para roles temporales. |
 | **Magic link** | `magic_link_requests` | Solicitudes de enlace de acceso, su vigencia y estado. |
 | **Magic link** | `magic_link_statuses` | Catálogo de estados de una solicitud de enlace. |
 | **Auditoría** | `audit_events` | Bitácora particionada de eventos de seguridad y accesos. |
 | **Auditoría** | `audit_event_types` | Catálogo de tipos de evento auditables. |
 | **Estados** | `user_statuses` | Catálogo de estados posibles de una cuenta de usuario. |
 
-### 19.2 Reglas de integridad
+### 19.3 Detalle de tablas
 
-| Regla | Descripción |
+#### `user_statuses`
+
+Catálogo de estados válidos para los usuarios.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `code` | `varchar(32)` | No | PK | — | Código identificador del estado (por ejemplo, `pending`, `active`). |
+| `description` | `varchar(255)` | No | — | — | Descripción detallada del estado. |
+
+#### `users`
+
+Entidad principal que almacena las cuentas de usuario.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | Identificador único universal del usuario. |
+| `email` | `citext` | No | UQ | — | Correo institucional. Único, no nulo y sin espacios. Debe pertenecer al dominio `@utt.edu.mx`. |
+| `display_name` | `varchar(160)` | Sí | — | `NULL` | Nombre de visualización o perfil del usuario. |
+| `status_code` | `varchar(32)` | No | FK | `'pending'` | Estado del usuario. Referencia a `user_statuses(code)`. |
+| `email_verified_at` | `timestamptz` | Sí | — | `NULL` | Fecha y hora en la que se verificó el correo. |
+| `last_login_at` | `timestamptz` | Sí | — | `NULL` | Fecha y hora del último inicio de sesión exitoso. |
+| `created_at` | `timestamptz` | No | — | `now()` | Fecha y hora de creación de la cuenta. |
+| `updated_at` | `timestamptz` | No | — | `now()` | Fecha y hora de última modificación. Actualizado por trigger. |
+| `deleted_at` | `timestamptz` | Sí | — | `NULL` | Marca de tiempo para borrado lógico (*soft delete*). |
+
+**Constraints:**
+
+- `users_email_not_blank`: `CHECK (btrim(email::text) <> '')`
+- `users_verified_email_consistency`: `CHECK (email_verified_at IS NULL OR status_code <> 'pending')`
+- `users_email_domain`: `CHECK (email::text ~* '@utt\.edu\.mx$')` — restringe el acceso a correos institucionales `@utt.edu.mx`.
+- `users_active_requires_verified_email`: `CHECK (status_code <> 'active' OR email_verified_at IS NOT NULL)`
+
+**Índices:**
+
+- `idx_users_status_active`: `(status_code, created_at DESC) WHERE deleted_at IS NULL`
+- `idx_users_last_login`: `(last_login_at DESC) WHERE deleted_at IS NULL`
+
+#### `identity_providers`
+
+Catálogo de proveedores externos de autenticación.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `smallint` | No | PK | `IDENTITY` | Identificador único autoincremental del proveedor. |
+| `code` | `varchar(32)` | No | UQ | — | Código único del proveedor (por ejemplo, `firebase`). |
+| `description` | `varchar(255)` | No | — | — | Nombre / descripción del proveedor. |
+
+#### `user_identities`
+
+Relación entre cuentas de usuario locales y sus identidades en proveedores externos.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | Identificador único del registro de identidad. |
+| `user_id` | `uuid` | No | FK | — | ID del usuario interno. Referencia a `users(id)` `ON DELETE CASCADE`. |
+| `provider_id` | `smallint` | No | FK | — | ID del proveedor. Referencia a `identity_providers(id)`. |
+| `provider_subject` | `varchar(255)` | No | — | — | UID asignado por el proveedor externo (*Subject*). No en blanco. |
+| `provider_email` | `citext` | Sí | — | `NULL` | Correo asociado en el proveedor externo. |
+| `claims_snapshot` | `jsonb` | No | — | `'{}'` | Instantánea de los claims/tokens devueltos por el proveedor. Debe ser un objeto JSON. |
+| `linked_at` | `timestamptz` | No | — | `now()` | Fecha y hora de vinculación de la cuenta. |
+| `last_verified_at` | `timestamptz` | Sí | — | `NULL` | Fecha de última verificación con el proveedor. |
+
+**Constraints e índices:**
+
+- `uq_user_identity_subject`: `UNIQUE (provider_id, provider_subject)`
+- `uq_user_identity_provider`: `UNIQUE (user_id, provider_id)`
+- `user_identity_claims_object`: `CHECK (jsonb_typeof(claims_snapshot) = 'object')`
+- `idx_user_identities_user`: índice sobre `(user_id)`
+
+#### `roles`
+
+Perfiles y roles de usuario para el control de accesos (RBAC).
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | Identificador único del rol. |
+| `code` | `varchar(64)` | No | UQ | — | Código técnico único. Expresión regular: `^[a-z][a-z0-9_.-]{1,63}$`. |
+| `name` | `varchar(120)` | No | — | — | Nombre del rol (por ejemplo, `Lector`, `Administrador`). |
+| `description` | `varchar(500)` | Sí | — | `NULL` | Explicación del rol y sus alcances. |
+| `is_system` | `boolean` | No | — | `false` | Indica si es un rol protegido del sistema. |
+| `created_at` | `timestamptz` | No | — | `now()` | Fecha de creación. |
+| `updated_at` | `timestamptz` | No | — | `now()` | Fecha de modificación. Actualizado por trigger. |
+
+#### `permissions`
+
+Permisos atómicos asignables a los roles.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | Identificador único del permiso. |
+| `code` | `varchar(128)` | No | UQ | — | Código del permiso. Expresión regular: `^[a-z][a-z0-9_.:-]{2,127}$`. |
+| `description` | `varchar(500)` | No | — | — | Explicación del alcance del permiso. |
+| `created_at` | `timestamptz` | No | — | `now()` | Fecha de creación. |
+
+#### `role_permissions`
+
+Tabla intermedia de asignación de permisos a roles (muchos a muchos).
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `role_id` | `uuid` | No | PK / FK | — | Parte de la PK compuesta. Referencia a `roles(id)` `ON DELETE CASCADE`. |
+| `permission_id` | `uuid` | No | PK / FK | — | Parte de la PK compuesta. Referencia a `permissions(id)` `ON DELETE CASCADE`. |
+| `granted_at` | `timestamptz` | No | — | `now()` | Fecha de asignación del permiso al rol. |
+
+**Índices:**
+
+- `idx_role_permissions_permission`: `(permission_id, role_id)`
+
+#### `user_roles`
+
+Tabla intermedia de asignación de roles a usuarios, con soporte para roles temporales.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `user_id` | `uuid` | No | PK / FK | — | Parte de la PK compuesta. Usuario al que se le otorga el rol. Referencia a `users(id)` `ON DELETE CASCADE`. |
+| `role_id` | `uuid` | No | PK / FK | — | Parte de la PK compuesta. Rol otorgado. Referencia a `roles(id)` `ON DELETE RESTRICT`. |
+| `granted_by` | `uuid` | Sí | FK | `NULL` | Usuario que otorgó el rol. Referencia a `users(id)` `ON DELETE SET NULL`. |
+| `granted_at` | `timestamptz` | No | — | `now()` | Fecha de otorgamiento. |
+| `expires_at` | `timestamptz` | Sí | — | `NULL` | Fecha de expiración para roles temporales (`expires_at > granted_at`). |
+
+**Índices:**
+
+- `idx_user_roles_role`: `(role_id, user_id)`
+- `idx_user_roles_expiration`: `(expires_at) WHERE expires_at IS NOT NULL`
+
+#### `magic_link_statuses`
+
+Catálogo de estados del flujo de enlace mágico.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `code` | `varchar(32)` | No | PK | — | Código de estado (por ejemplo, `requested`, `sent`, `consumed`). |
+| `description` | `varchar(255)` | No | — | — | Descripción técnica del estado. |
+| `is_terminal` | `boolean` | No | — | `false` | `true` si es un estado final donde el enlace no se puede reutilizar. |
+
+#### `magic_link_requests`
+
+Registro y control de las solicitudes de inicio de sesión por enlace mágico.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | ID de la solicitud. |
+| `user_id` | `uuid` | Sí | FK | `NULL` | ID de usuario asociado (si existe). Referencia a `users(id)` `ON DELETE SET NULL`. |
+| `email` | `citext` | No | — | — | Correo al que se envió la solicitud. No en blanco. |
+| `status_code` | `varchar(32)` | No | FK | `'requested'` | Estado de la solicitud. Referencia a `magic_link_statuses(code)`. |
+| `correlation_id` | `uuid` | No | UQ | `gen_random_uuid()` | ID único global de correlación para auditoría. |
+| `continue_url` | `text` | No | — | — | URL de redirección tras la autenticación. |
+| `client_nonce_hash` | `bytea` | Sí | — | `NULL` | Hash binario de validación del cliente (anti-CSRF/replay). |
+| `requested_ip` | `inet` | Sí | — | `NULL` | Dirección IP del cliente solicitante. |
+| `user_agent` | `text` | Sí | — | `NULL` | Navegador o cliente desde el que se solicitó. |
+| `firebase_event_id` | `varchar(255)` | Sí | — | `NULL` | Identificador retornado por el evento de Firebase. |
+| `requested_at` | `timestamptz` | No | — | `now()` | Fecha y hora de solicitud. |
+| `sent_at` | `timestamptz` | Sí | — | `NULL` | Fecha y hora de envío (`sent_at >= requested_at`). |
+| `expires_at` | `timestamptz` | No | — | — | Fecha límite de validez (`expires_at > requested_at`). |
+| `consumed_at` | `timestamptz` | Sí | — | `NULL` | Fecha y hora de consumo del enlace (`consumed_at >= requested_at`). |
+| `failure_code` | `varchar(100)` | Sí | — | `NULL` | Código de error si la solicitud falló. |
+| `failure_detail` | `varchar(500)` | Sí | — | `NULL` | Detalle en texto del fallo ocurrido. |
+| `metadata` | `jsonb` | No | — | `'{}'` | Metadatos dinámicos (debe ser objeto JSON). |
+
+**Constraints:**
+
+- `magic_link_consumed_status`: `consumed_at` solo no nulo si `status_code = 'consumed'`.
+
+**Índices:**
+
+- `idx_magic_link_email_requested`: `(email, requested_at DESC)`
+- `idx_magic_link_user_requested`: `(user_id, requested_at DESC) WHERE user_id IS NOT NULL`
+- `idx_magic_link_pending_expiration`: `(expires_at) WHERE status_code IN ('requested', 'sent')`
+- `idx_magic_link_firebase_event`: `(firebase_event_id) WHERE firebase_event_id IS NOT NULL`
+
+#### `audit_event_types`
+
+Catálogo de tipos de eventos auditables.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `code` | `varchar(80)` | No | PK | — | Código único del evento (por ejemplo, `auth.login_succeeded`). |
+| `description` | `varchar(255)` | No | — | — | Descripción de lo que representa el evento. |
+
+#### `audit_events` (tabla particionada)
+
+Registro de auditoría de seguridad del sistema. Particionada por rangos de fecha: `PARTITION BY RANGE (occurred_at)`.
+
+| Columna | Tipo de dato | Nulable | Clave | Valor por defecto | Descripción / restricciones |
+|---|---|:---:|:---:|---|---|
+| `occurred_at` | `timestamptz` | No | PK | `now()` | Momento exacto en que ocurrió el evento (clave de particionamiento). |
+| `id` | `uuid` | No | PK | `gen_random_uuid()` | Identificador único del registro de auditoría. |
+| `event_type_code` | `varchar(80)` | No | FK | — | Tipo de evento. Referencia a `audit_event_types(code)`. |
+| `actor_user_id` | `uuid` | Sí | FK | `NULL` | ID del usuario que realizó la acción. Referencia a `users(id)` `ON DELETE SET NULL`. |
+| `subject_user_id` | `uuid` | Sí | FK | `NULL` | ID del usuario afectado por la acción. Referencia a `users(id)` `ON DELETE SET NULL`. |
+| `magic_link_request_id` | `uuid` | Sí | FK | `NULL` | Solicitud de magic link vinculada. Referencia a `magic_link_requests(id)` `ON DELETE SET NULL`. |
+| `correlation_id` | `uuid` | Sí | — | `NULL` | Identificador de trazabilidad del flujo de la petición. |
+| `resource_type` | `varchar(80)` | Sí | — | `NULL` | Tipo de entidad/recurso modificado. |
+| `resource_id` | `varchar(255)` | Sí | — | `NULL` | ID o identificador del recurso modificado. |
+| `source_ip` | `inet` | Sí | — | `NULL` | Dirección IP de origen de la acción. |
+| `user_agent` | `text` | Sí | — | `NULL` | Navegador/dispositivo utilizado. |
+| `succeeded` | `boolean` | No | — | — | `true` si la acción fue exitosa, `false` si falló. |
+| `payload` | `jsonb` | No | — | `'{}'` | Detalles complementarios del evento (objeto JSON). |
+
+**Particiones:**
+
+- `audit_events_default`: partición por defecto para captura general de eventos.
+
+**Índices:**
+
+- `idx_audit_events_actor`: `(actor_user_id, occurred_at DESC)`
+- `idx_audit_events_subject`: `(subject_user_id, occurred_at DESC)`
+- `idx_audit_events_type`: `(event_type_code, occurred_at DESC)`
+- `idx_audit_events_correlation`: `(correlation_id, occurred_at DESC) WHERE correlation_id IS NOT NULL`
+- `idx_audit_events_resource`: `(resource_type, resource_id, occurred_at DESC) WHERE resource_type IS NOT NULL AND resource_id IS NOT NULL`
+
+### 19.4 Reglas de integridad
+
+| Regla | Implementación |
 |---|---|
-| **Correo institucional inmutable** | El correo `@utt.edu.mx` no puede modificarse una vez verificado (RF-09, R12). |
-| **Integridad referencial** | Las relaciones usuario–identidad, usuario–rol y rol–permiso se garantizan mediante claves foráneas. |
-| **Unicidad de identidad** | Cada identidad de proveedor se vincula a un único usuario. |
-| **Trazabilidad** | Todo evento de auditoría referencia al actor, al sujeto y, cuando aplica, al magic link involucrado. |
-| **Consumo de enlace** | Una solicitud de magic link solo puede consumirse una vez. |
-
-> **Pendiente de consolidación:** el detalle campo por campo (tipo de dato, longitud, nulabilidad y restricciones) se completará en la versión final del documento técnico, conforme al modelo entidad-relación de la [Figura 3](#modelo-er).
+| **Correo institucional inmutable** | Trigger `prevent_user_email_change()` sobre `users.email` cuando `email_verified_at IS NOT NULL` (RF-09, R12). |
+| **Dominio restringido** | Constraint `users_email_domain` con expresión regular `@utt\.edu\.mx$`. |
+| **Consistencia de verificación** | `users_verified_email_consistency` y `users_active_requires_verified_email`. |
+| **Integridad referencial** | Claves foráneas en `user_identities`, `role_permissions`, `user_roles`, `magic_link_requests` y `audit_events`. |
+| **Unicidad de identidad** | `uq_user_identity_subject` y `uq_user_identity_provider`. |
+| **Consumo de enlace** | Constraint `magic_link_consumed_status` y catálogo `magic_link_statuses.is_terminal`. |
+| **Roles temporales** | `user_roles.expires_at` con índice parcial `idx_user_roles_expiration`. |
+| **Trazabilidad** | `audit_events` vincula actor, sujeto, magic link, recurso y `correlation_id`. |
+| **Rendimiento de auditoría** | `audit_events` particionada por rango de fechas con partición por defecto e índices por actor, sujeto, tipo, correlación y recurso. |
+| **Borrado lógico** | `users.deleted_at` con índices parciales que excluyen registros eliminados. |
 
 ---
 
@@ -1055,7 +1289,10 @@ DOCUMENTATION/
 ├── assets/
 │   ├── images/       # Capturas, diagramas exportados (PNG, JPG, SVG)
 │   └── diagrams/     # Archivos fuente de diagramas (Mermaid .mmd)
+├── docs/
+│   └── explicacion-base-de-datos.md   # Guía didáctica del esquema de BD
 ├── .gitignore        # Temporales de editores, sistema y MS Word (~$*)
+├── Explicacion-Base-de-Datos-UTT-Connect.pdf   # Versión PDF de la guía
 └── README.md         # Documentación centralizada completa
 ```
 
@@ -1063,6 +1300,8 @@ DOCUMENTATION/
 |---|---|
 | [`assets/images/`](assets/images) | Figuras exportadas del documento fuente: matriz de riesgos, cronograma, arquitectura de autenticación, casos de uso, modelo entidad-relación y operación de PostgreSQL. |
 | [`assets/diagrams/`](assets/diagrams) | Fuentes editables en Mermaid de los diagramas de arquitectura, flujo de autenticación y modelo entidad-relación. |
+| [`docs/explicacion-base-de-datos.md`](docs/explicacion-base-de-datos.md) | Guía didáctica del esquema: lectura de SQL, mapa de tablas, RBAC, magic link, auditoría, consultas de práctica y checklist. |
+| [`Explicacion-Base-de-Datos-UTT-Connect.pdf`](Explicacion-Base-de-Datos-UTT-Connect.pdf) | Versión PDF de la guía del esquema de base de datos. |
 | [`.gitignore`](.gitignore) | Reglas de exclusión para archivos temporales, de sistema, de editor y credenciales. |
 | [`README.md`](README.md) | Documento central de la documentación del proyecto. |
 
@@ -1165,7 +1404,8 @@ Durante la consolidación del documento fuente se identificaron las siguientes d
 | **3** | Nombre de la rama principal | La sección de GitHub Flow menciona `main`; la configuración del entorno y el repositorio usan `master`. | Se normaliza a **`master`**, rama efectiva del repositorio. |
 | **4** | Alcance de notificaciones push | RF-23 las establece como requisito; el MVP las difiere a una fase incremental. | Se mantiene RF-23 como requisito y se marca explícitamente su carácter incremental en la sección 6. |
 | **5** | Matriz de riesgos y cronograma | Ambos elementos existen únicamente como imágenes en el documento fuente. | Se incluyen las imágenes y se complementan con tablas de escala y fases derivadas de los datos textuales. |
-| **6** | Diccionario de datos | El documento fuente solo presenta la introducción de la sección. | Se documentan entidades, dominios y reglas de integridad; el detalle campo por campo queda marcado como pendiente. |
+| **6** | Diccionario de datos | La primera versión del documento fuente solo presentaba la introducción de la sección; la versión actual incorpora el diccionario completo. | Se integra el diccionario completo: extensiones, funciones/triggers y las 12 tablas con columnas, restricciones e índices (sección 19). |
+| **7** | Formato del diccionario | En el documento fuente, la vista tabular del diccionario se interrumpe en la tabla `permissions`; el detalle de las tablas restantes aparece en formato de lista. | Ambas vistas se consolidan en tablas homogéneas para las 12 tablas del esquema. |
 
 ---
 
