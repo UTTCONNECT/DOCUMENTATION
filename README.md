@@ -82,7 +82,7 @@ La plataforma opera como un **canal oficial único** entre las áreas administra
 
 | Pilar | Descripción |
 |---|---|
-| **Autenticación institucional** | Acceso exclusivo con correo `@utt.edu.mx`, verificación por OTP y control de sesiones concurrentes. |
+| **Autenticación institucional** | Acceso exclusivo con correo `@utt.edu.mx`, verificación por enlace mágico (magic link) y control de sesiones concurrentes. |
 | **Muro de avisos** | Publicación departamental de avisos con adjuntos, búsqueda por palabras clave y filtros por fecha y departamento. |
 | **Soporte directo** | Mensajería individual en tiempo real (WebSockets) entre estudiantes y dependencias administrativas. |
 | **Administración** | Gestión de departamentos, cuentas y auditoría de accesos bajo el rol Administrador. |
@@ -188,7 +188,7 @@ El desarrollo de la plataforma web abarca las siguientes dimensiones operativas,
 | **Comunicación en tiempo real** | Transmisión instantánea de mensajes en el chat mediante arquitectura de WebSockets. |
 | **Sistema de notificaciones** | Emisión de notificaciones push globales para entornos móviles y de escritorio mediante Firebase Cloud Messaging (FCM) o Service Workers (PWA). |
 | **Almacenamiento e interfaz** | Gestión de archivos multimedia respaldada en servicios de la nube (AWS S3, Cloudinary o Firebase Storage) con URLs persistentes en PostgreSQL, diseño responsivo adaptativo (Mobile-First) y paginación de contenido en el backend. |
-| **Seguridad aplicativa** | Encriptación de contraseñas mediante hashing (bcrypt), sanitización de datos contra Cross-Site Scripting (XSS), consultas parametrizadas contra inyección SQL (SQLi) y limitación de peticiones (Rate Limiting). |
+| **Seguridad aplicativa** | Autenticación sin contraseñas mediante enlace mágico y validación de tokens de Firebase, sanitización de datos contra Cross-Site Scripting (XSS), consultas parametrizadas contra inyección SQL (SQLi) y limitación de peticiones (Rate Limiting). |
 
 <a id="limitaciones-del-proyecto"></a>
 
@@ -258,9 +258,9 @@ El MVP contempla la ejecución integrada del siguiente flujo principal:
 |---|---|---|
 | **RF-04** | Autenticación estricta | El sistema debe permitir el inicio de sesión utilizando exclusivamente cuentas de correo con el dominio `@utt.edu.mx`. |
 | **RF-05** | Auto-registro de usuarios (rol Lector) | El sistema debe permitir que los alumnos, profesores y directivos creen su propia cuenta utilizando estrictamente su correo institucional. |
-| **RF-06** | Verificación de identidad por OTP | Durante el registro, el sistema enviará un Código de Contraseña de un Solo Uso (OTP) al correo institucional. El usuario debe ingresar este código para verificar su identidad y establecer su contraseña. |
-| **RF-07** | Medidor visual de contraseñas | En los formularios de creación y cambio de contraseña, el sistema mostrará un indicador visual (barra de colores) en tiempo real que evalúe qué tan fuerte es la contraseña basándose en su longitud. |
-| **RF-08** | Recuperación y cambio de contraseña (OTP) | El sistema contará con un flujo de "Olvidé mi contraseña" y "Cambiar contraseña". Ambos procesos exigirán la validación obligatoria mediante código OTP enviado al correo registrado. |
+| **RF-06** | Verificación de identidad por enlace mágico | Durante el registro, el sistema enviará un enlace de un solo uso al correo institucional. Al abrirlo, el usuario verifica su identidad y se crea o recupera su cuenta, sin establecer contraseña. |
+| **RF-07** | *Eliminado* | El medidor visual de contraseñas ya no aplica: el sistema no gestiona contraseñas. Ver [`ADR-001`](docs/adr/ADR-001-autenticacion-magic-link.md). |
+| **RF-08** | Recuperación de acceso (reenvío de enlace) | Si el usuario pierde el enlace o este expira, podrá solicitar uno nuevo. El acceso se recupera con el mismo mecanismo de enlace mágico, sin contraseñas. |
 | **RF-09** | Inmutabilidad del correo electrónico | Una vez que un usuario registra y verifica su correo institucional, el sistema bloqueará cualquier intento de modificación de este campo. |
 | **RF-10** | Control de roles | El sistema gestionará el acceso mediante 3 roles estrictos: **Lector** (alumnos, profesores, directivos), **Departamento** y **Admin**. |
 | **RF-11** | Control de sesiones concurrentes | El sistema debe restringir el acceso a un máximo de 2 sesiones activas simultáneas por usuario. Un tercer intento rechazará el acceso o invalidará la sesión más antigua. |
@@ -274,7 +274,7 @@ El MVP contempla la ejecución integrada del siguiente flujo principal:
 | ID | Requisito | Descripción |
 |---|---|---|
 | **RF-14** | Gestión de departamentos (CRUD) | El administrador debe poder crear, leer, actualizar y eliminar departamentos (nombre, descripción y foto/logo). |
-| **RF-15** | Gestión de cuentas de departamento (CRUD) | El administrador será el único capaz de crear cuentas para los gestores (nombre, correo institucional, contraseña, foto de perfil) y asignarlos a un departamento. |
+| **RF-15** | Gestión de cuentas de departamento (CRUD) | El administrador será el único capaz de crear cuentas para los gestores (nombre, correo institucional, foto de perfil) y asignarlos a un departamento. La identidad se completa cuando el gestor abre el enlace mágico enviado a su correo. |
 | **RF-16** | Dashboard de búsqueda y filtros | El panel del administrador contará con vistas de lista para usuarios y departamentos, barras de búsqueda por nombre y filtros de pertenencia. |
 
 <a id="rf-muro"></a>
@@ -339,11 +339,11 @@ El MVP contempla la ejecución integrada del siguiente flujo principal:
 
 | ID | Requisito | Descripción |
 |---|---|---|
-| **RNF-09** | Estándares de contraseñas (NIST 800-63B) | Las contraseñas exigirán un mínimo de 8 caracteres, recomendarán 15+ y tendrán un máximo de 64, priorizando la longitud sobre reglas arbitrarias de caracteres especiales. |
-| **RNF-10** | Seguridad de contraseñas (hashing) | Toda contraseña será encriptada (por ejemplo, bcrypt) antes de guardarse en la base de datos. |
+| **RNF-09** | Verificación de identidad sin contraseñas (NIST 800-63B) | El acceso se realizará mediante un enlace de un solo uso enviado al correo institucional, con vigencia máxima de 15 minutos y reenvío controlado. |
+| **RNF-10** | Protección de identidad y tokens | No se almacenarán contraseñas. Los ID tokens de Firebase se validan en el backend y los JWT propios se firman con un secreto fuera del código fuente. |
 | **RNF-11** | Prevención de inyección SQL (SQLi) | Uso estricto de consultas parametrizadas o un ORM en el backend. |
 | **RNF-12** | Protección contra Cross-Site Scripting (XSS) | Sanitización estricta de entradas y salidas de texto para bloquear ejecución de scripts maliciosos en el cliente. |
-| **RNF-13** | Rate Limiting (fuerza bruta) | El backend limitará la cantidad de peticiones en los endpoints de login y validación OTP, bloqueando temporalmente la IP tras intentos fallidos. |
+| **RNF-13** | Rate Limiting (fuerza bruta) | El backend limitará la cantidad de peticiones en los endpoints de solicitud y verificación del enlace mágico, bloqueando temporalmente la IP tras intentos fallidos. |
 
 ---
 
@@ -357,13 +357,13 @@ Cada riesgo se evalúa con un **valor** resultante de probabilidad × impacto (e
 
 | ID | Riesgo | Consecuencia | Valor | Respuesta | Valoración |
 |---|---|---|---|---|---|
-| **R01** | Fallo o retraso en el envío de códigos OTP vía correo institucional. | Los usuarios no pueden completar el auto-registro, verificar su identidad ni recuperar sus contraseñas. | 20 | Implementar colas de envío asíncrono (por ejemplo, BullMQ/Redis) con reintentos automáticos, vigencia de código a 10 minutos y habilitar botón de reenvío tras 60 segundos. | Crítico (Alto) |
+| **R01** | Fallo o retraso en el envío de enlaces mágicos vía correo institucional. | Los usuarios no pueden completar el auto-registro ni recuperar su acceso. | 20 | Implementar colas de envío asíncrono (por ejemplo, BullMQ/Redis) con reintentos automáticos, vigencia del enlace a 15 minutos y habilitar botón de reenvío tras 60 segundos. | Crítico (Alto) |
 | **R02** | Pérdida de conexión o latencia en la arquitectura WebSocket. | Los mensajes del chat departamental no se entregan en tiempo real, requiriendo recargar la página. | 20 | Configurar reconexión automática con fallback a HTTP Polling en Socket.io y almacenar mensajes no enviados en la sesión local (IndexedDB) hasta reconectar. | Crítico (Alto) |
 | **R03** | Bloqueo o rechazo de notificaciones push mediante FCM / Service Workers. | La comunidad universitaria no recibe avisos institucionales en PC o móviles de forma nativa. | 15 | Integrar un centro de notificaciones in-app (módulo interno con badge de no leídos) para consultar alertas directamente dentro del sistema si el navegador bloquea las push. | Medio |
 | **R04** | Agotamiento del almacenamiento en la nube o exceso del límite de 10 MB por archivo. | Rechazo en la carga de adjuntos (PDF/imágenes) en avisos y chat, interrumpiendo la gestión de trámites. | 20 | Validar formato y peso estrictamente en frontend/backend, aplicar compresión automática de imágenes antes de la subida y activar alertas de consumo en el servicio cloud. | Crítico (Alto) |
 | **R05** | Vulnerabilidades de inyección SQL (SQLi) o Cross-Site Scripting (XSS). | Compromiso de la base de datos PostgreSQL, manipulación de búsquedas o ejecución de scripts maliciosos. | 25 | Utilizar consultas parametrizadas mediante un ORM (TypeORM/Prisma), sanitizar entradas de texto enriquecido con DOMPurify y configurar políticas CSP en el servidor. | Crítico (Alto) |
 | **R06** | Bloqueo accidental de usuarios por Rate Limiting en IP compartida. | Múltiples alumnos intentando iniciar sesión desde la red WiFi de la UTT son bloqueados temporalmente. | 16 | Configurar el Rate Limiting evaluando de forma combinada la dirección IP junto con el identificador/correo del usuario, y agregar la subred institucional a una lista blanca. | Alto |
-| **R07** | Incumplimiento de estándares NIST 800-63B o hashing inseguro de contraseñas. | Aceptación de claves vulnerables a ataques de fuerza bruta o almacenamiento expuesto en la base de datos. | 20 | Aplicar la regla de longitud de 8 a 64 caracteres en formularios, encriptar claves con bcrypt e integrar el medidor visual de fortaleza en tiempo real. | Crítico (Alto) |
+| **R07** | Enlace mágico interceptado o reutilizado. | Acceso no autorizado a una cuenta institucional. | 20 | Enlace de un solo uso, expiración de 15 minutos, validación del ID token de Firebase en el backend, auditoría de cada solicitud y consumo, y bloqueo de reenvíos abusivos. | Crítico (Alto) |
 | **R08** | Incompatibilidad de la interfaz responsiva (Mobile-First). | Elementos del chat o la Bottom Navigation Bar inalcanzables o desalineados en pantallas móviles. | 12 | Aplicar diseño con reglas CSS flexbox/grid y realizar pruebas de usabilidad multi-dispositivo y emuladores para validar la barra inferior en móviles y lateral en escritorio. | Medio |
 | **R09** | Carga lenta del feed por fallas en la paginación o scroll infinito. | Congelamiento o alto consumo de memoria en el navegador al acumular cientos de publicaciones. | 12 | Implementar paginación basada en cursores (limit/offset) en el backend e indexar los campos de búsqueda por fecha y departamento en PostgreSQL. | Medio |
 | **R10** | Error en la manipulación del DOM mediante directivas de Angular o uso de scripts externos. | Fallas de renderizado en componentes de la Landing Page (acordeón FAQ) y problemas de seguridad frontend. | 10 | Construir componentes dinámicos (acordeones y modales) utilizando exclusivamente directivas e inyección de dependencias de Angular, evitando librerías JS que manipulen el DOM directamente. | Medio |
@@ -492,7 +492,7 @@ Se restringe el número de tareas simultáneas en la columna **En progreso** par
 | Tarea | Asignado | Esfuerzo | Dependencias | Criterios de terminado (DoD) |
 |---|---|:---:|---|---|
 | Diseño UI/UX: Dashboard Admin y Muro de Avisos | Meredith, César | 8 h | Ninguna | Vistas aprobadas por PO (Sara), mockups exportables en Figma, componentes listos para Angular. |
-| Backend: CRUD Departamentos, Usuarios y Guards RBAC | Ernesto, Aníbal | 24 h | Diseño de BD (Fase 1) | Endpoints probados en Postman, contraseñas hasheadas (bcrypt), tokens JWT funcionales, restricción de rutas por rol implementada. |
+| Backend: CRUD Departamentos, Usuarios y Guards RBAC | Ernesto, Aníbal | 24 h | Diseño de BD (Fase 1) | Endpoints probados en Postman, magic link funcional (solicitud, verificación y auditoría), tokens JWT funcionales, restricción de rutas por rol implementada. |
 | Frontend: Dashboard Admin y Gestión de Usuarios | César | 20 h | UI/UX, Backend Auth | Vistas construidas en Angular, formularios reactivos con validación, conexión con API exitosa, manejo de errores visible al usuario. |
 | Backend: CRUD Avisos, Paginación y Subida a Nube (S3/Firebase) | Sara, Ernesto | 24 h | Backend Auth | Paginación funcional (máx. 10 por petición), archivos multimedia guardan URL correcta en PostgreSQL, validación de límite de 10 MB. |
 | Frontend: Muro de Avisos, Filtros y Formulario de Carga | Meredith | 20 h | UI/UX, Backend CRUD Avisos | Scroll infinito o paginación en UI, filtros operativos (fecha/departamento), previsualización de adjuntos antes de publicar. |
@@ -561,7 +561,7 @@ flowchart TB
     end
 
     subgraph N["Capa de Lógica de Negocio · NestJS"]
-        B1["Auth Service<br/>JWT · OTP · magic link"]
+        B1["Auth Service<br/>JWT · magic link"]
         B2["User & RBAC Service"]
         B3["Avisos y Departamentos"]
         B4["Gateway WebSockets"]
@@ -589,7 +589,7 @@ flowchart TB
 | Capa | Tecnología | Responsabilidad |
 |---|---|---|
 | **Presentación** (cliente / frontend) | Angular | Interfaz gráfica con la que interactúan los distintos perfiles de la comunidad universitaria. Encargada de la renderización dinámica de los avisos en el muro, la gestión del tablero de Preguntas Frecuentes (FAQ), la navegación por perfiles y la interfaz interactiva de mensajería instantánea. Realiza la captura de eventos, validaciones en el cliente y la presentación fluida de los datos consumidos desde el servidor. |
-| **Lógica de negocio** (servidor / backend) | NestJS | Motor central del sistema. Implementa y ejecuta las reglas del dominio universitario: autenticación (tokens JWT y validación mediante códigos OTP), control de acceso basado en roles (RBAC: Lector, Departamento y Admin), flujo CRUD de avisos y departamentos, orquestación del servidor de WebSockets para el chat en tiempo real y conexión con servicios en la nube para el almacenamiento multimedia. |
+| **Lógica de negocio** (servidor / backend) | NestJS | Motor central del sistema. Implementa y ejecuta las reglas del dominio universitario: autenticación (tokens JWT y validación de enlaces mágicos de Firebase), control de acceso basado en roles (RBAC: Lector, Departamento y Admin), flujo CRUD de avisos y departamentos, orquestación del servidor de WebSockets para el chat en tiempo real y conexión con servicios en la nube para el almacenamiento multimedia. |
 | **Persistencia de datos** (base de datos) | PostgreSQL | Almacenamiento relacional estructurado y seguro. Modela y resguarda la información crítica del sistema: usuarios, departamentos, publicaciones, historial de conversaciones, tablas de auditoría de sesiones y direcciones IP, garantizando la integridad referencial y la eficiencia en las peticiones mediante consultas parametrizadas e indexación. |
 
 <a id="spa"></a>
@@ -830,8 +830,8 @@ Adicionalmente, se aplican las siguientes medidas de seguridad de forma transver
 | Botones de acción (CTAs) | Landing Page | "Iniciar sesión >" y "Registrarse" | Dirigir a los flujos de acceso de usuario. |
 | Microcopy de restricción | Formulario de Registro | "Acceso exclusivo con correo @utt.edu.mx" | Indicar el requisito obligatorio de correo institucional. |
 | Microcopy de advertencia | Formulario de Registro | "Tu correo quedará vinculado y no podrá modificarse después de verificarlo" | Prevenir errores en la captura del correo antes de la validación. |
-| Criterio de contraseña | Formulario de Registro | "Min. 8 - recomendado 15+" | Orientar sobre el nivel de seguridad de la clave. |
-| Botón de envío | Formulario de Registro | "Enviar código de verificación" | Procesar el registro y detonar el envío del código OTP. |
+| Aviso del mecanismo de acceso | Formulario de Registro | "Recibirás un enlace de un solo uso en tu correo institucional" | Explicar el acceso sin contraseña. |
+| Botón de envío | Formulario de Registro | "Enviar enlace de acceso" | Procesar la solicitud y disparar el enlace mágico. |
 | Preguntas frecuentes (FAQ) | Sección FAQ (acordeón) | "¿Quién puede usar UTT Connect?", "¿Los avisos son oficiales?", "¿Cómo contacto a un departamento?", "¿Cómo se protegen mis datos?" | Resolver dudas operativas recurrentes de la comunidad. |
 | Respuesta de FAQ | Sección FAQ (desplegable) | "Estudiantes, docentes, directivos y gestores con una cuenta institucional activa @utt.edu.mx." | Explicar el alcance y perfiles de usuarios. |
 | Tarjeta de publicación | Muro de Avisos (Feed) | "Coordinación de Becas - Convocatoria Becas de Manutención 2026" | Difundir avisos y convocatorias académicas. |
@@ -1016,6 +1016,10 @@ Ambos repositorios de desarrollo contienen la evidencia de la colaboración, ref
 El diccionario de datos detalla la estructura principal de la base de datos para garantizar la integridad referencial y cumplir con el diseño relacional propuesto. El esquema se compone de **12 tablas**, dos extensiones de PostgreSQL y dos funciones de trigger.
 
 > 📘 **Guía complementaria:** para una explicación didáctica del esquema (cómo leer una definición SQL, mapa de tablas, flujo de autenticación y consultas de práctica), consulta [`docs/explicacion-base-de-datos.md`](docs/explicacion-base-de-datos.md) o su versión PDF [`Explicacion-Base-de-Datos-UTT-Connect.pdf`](Explicacion-Base-de-Datos-UTT-Connect.pdf).
+>
+> 🗺️ **Modelo entidad-relación (MER):** el diagrama Mermaid del módulo de autenticación está en [`docs/mer-autenticacion.md`](docs/mer-autenticacion.md). Para verlo renderizado con zoom y descarga en SVG/PNG, abre [`docs/mer-autenticacion.html`](docs/mer-autenticacion.html) en el navegador.
+>
+> 🚀 **Guía de inicio del módulo:** para clonar, crear ramas, ejecutar los scripts, generar el módulo NestJS, probarlo y consumir las rutas, consulta [`docs/guia-inicio-modulo-auth.md`](docs/guia-inicio-modulo-auth.md).
 
 ### 19.1 Extensiones y funciones globales
 
@@ -1290,7 +1294,8 @@ DOCUMENTATION/
 │   ├── images/       # Capturas, diagramas exportados (PNG, JPG, SVG)
 │   └── diagrams/     # Archivos fuente de diagramas (Mermaid .mmd)
 ├── docs/
-│   └── explicacion-base-de-datos.md   # Guía didáctica del esquema de BD
+│   ├── explicacion-base-de-datos.md   # Guía didáctica del esquema de BD
+│   └── guia-inicio-modulo-auth.md     # Guía paso a paso del módulo de auth
 ├── .gitignore        # Temporales de editores, sistema y MS Word (~$*)
 ├── Explicacion-Base-de-Datos-UTT-Connect.pdf   # Versión PDF de la guía
 └── README.md         # Documentación centralizada completa
@@ -1301,6 +1306,7 @@ DOCUMENTATION/
 | [`assets/images/`](assets/images) | Figuras exportadas del documento fuente: matriz de riesgos, cronograma, arquitectura de autenticación, casos de uso, modelo entidad-relación y operación de PostgreSQL. |
 | [`assets/diagrams/`](assets/diagrams) | Fuentes editables en Mermaid de los diagramas de arquitectura, flujo de autenticación y modelo entidad-relación. |
 | [`docs/explicacion-base-de-datos.md`](docs/explicacion-base-de-datos.md) | Guía didáctica del esquema: lectura de SQL, mapa de tablas, RBAC, magic link, auditoría, consultas de práctica y checklist. |
+| [`docs/guia-inicio-modulo-auth.md`](docs/guia-inicio-modulo-auth.md) | Guía operativa para iniciar el módulo de auth: clonación, ramas, commits, scripts SQL, NestJS con TypeORM, entidades, DTOs, pruebas y consumo de rutas. |
 | [`Explicacion-Base-de-Datos-UTT-Connect.pdf`](Explicacion-Base-de-Datos-UTT-Connect.pdf) | Versión PDF de la guía del esquema de base de datos. |
 | [`.gitignore`](.gitignore) | Reglas de exclusión para archivos temporales, de sistema, de editor y credenciales. |
 | [`README.md`](README.md) | Documento central de la documentación del proyecto. |
@@ -1400,7 +1406,7 @@ Durante la consolidación del documento fuente se identificaron las siguientes d
 | # | Tema | Observación | Tratamiento en este README |
 |---|---|---|---|
 | **1** | Dominio de correo institucional | El documento alterna entre `@uttcampus.edu.mx` y `@utt.edu.mx`. | Se normaliza a **`@utt.edu.mx`**, que es el dominio usado en los requisitos funcionales y en los microcopys. |
-| **2** | Mecanismo de autenticación | Los RF-04 a RF-08 describen autenticación con **OTP**; la sección de diagramas describe **magic link** con Firebase. | Se documentan ambos: la especificación funcional (OTP) en la sección 7 y la arquitectura de referencia implementada (magic link) en la sección 14.3. |
+| **2** | Mecanismo de autenticación | Los RF-04 a RF-08 describían autenticación con **OTP**; el esquema implementa **magic link** con Firebase. | Se resuelve con el [`ADR-001`](docs/adr/ADR-001-autenticacion-magic-link.md): RF-06 y RF-08 se reemplazan por enlace mágico y RF-07 se elimina. La arquitectura resultante se detalla en la sección 14.3. |
 | **3** | Nombre de la rama principal | La sección de GitHub Flow menciona `main`; la configuración del entorno y el repositorio usan `master`. | Se normaliza a **`master`**, rama efectiva del repositorio. |
 | **4** | Alcance de notificaciones push | RF-23 las establece como requisito; el MVP las difiere a una fase incremental. | Se mantiene RF-23 como requisito y se marca explícitamente su carácter incremental en la sección 6. |
 | **5** | Matriz de riesgos y cronograma | Ambos elementos existen únicamente como imágenes en el documento fuente. | Se incluyen las imágenes y se complementan con tablas de escala y fases derivadas de los datos textuales. |

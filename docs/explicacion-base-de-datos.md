@@ -231,8 +231,8 @@ Acelera reportes de “últimos accesos”.
 ### Lo que no está en `users`
 
 - **No hay contraseña.** La autenticación se delega a Firebase mediante enlace mágico. Por eso no existe `password_hash`.
-- **No se valida el dominio `@utt.edu.mx` en la base de datos.** Solo se valida que el correo no esté vacío. La restricción del dominio debe hacerla el backend o, si se quisiera reforzar aquí, un `CHECK` con expresión regular.
-- **No hay trigger que impida cambiar el correo.** El requisito R12 del README menciona un trigger de inmutabilidad, pero este script no lo incluye; hoy la inmutabilidad depende de la aplicación.
+- **El dominio se valida con un `CHECK`.** La restricción `users_email_domain` exige que el correo termine en `@utt.edu.mx`. El formato completo (por ejemplo, que no haya dos `@`) lo valida el backend con `@IsEmail`.
+- **El correo es inmutable después de verificarlo.** El trigger `prevent_user_email_change()` impide modificarlo cuando `email_verified_at` ya tiene valor. Antes de verificar, el cambio sigue permitido para que el usuario pueda corregir un error de captura.
 
 ---
 
@@ -598,6 +598,30 @@ EXECUTE FUNCTION set_updated_at();
 
 **Detalle técnico:** `now()` devuelve la hora de inicio de la transacción, no la del instante exacto de cada fila. Si en una misma transacción actualizas diez filas, las diez tendrán el mismo `updated_at`. Para la mayoría de los casos es correcto; si se necesitara precisión por fila, se usaría `clock_timestamp()`.
 
+### 9.1 El trigger de inmutabilidad del correo
+
+```sql
+CREATE OR REPLACE FUNCTION prevent_user_email_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.email_verified_at IS NOT NULL
+       AND NEW.email IS DISTINCT FROM OLD.email THEN
+        RAISE EXCEPTION 'El correo institucional es inmutable una vez verificado (RF-09, R12)';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_users_prevent_email_change
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION prevent_user_email_change();
+```
+
+`OLD` es la fila **antes** del cambio y `NEW` la fila **después**. El trigger solo bloquea la operación cuando el correo ya fue verificado y el valor cambia; si `email_verified_at` es `NULL`, el usuario todavía puede corregir su correo.
+
 ---
 
 ## 10. Relaciones explicadas en lenguaje normal
@@ -753,17 +777,17 @@ ORDER BY occurred_at;
 
 Es importante saberlo para no asumir garantías que no existen:
 
-1. **No valida el dominio `@utt.edu.mx`.** Solo valida que el correo no esté vacío.
-2. **No impide cambiar el correo.** El requisito de inmutabilidad debe implementarse con un trigger o en la aplicación.
-3. **No obliga a que un usuario `active` tenga correo verificado.** Solo impide que un usuario verificado siga en `pending`.
+1. **No valida el formato completo del correo.** El `CHECK` `users_email_domain` exige que termine en `@utt.edu.mx`, pero acepta casos como `doble@arroba@utt.edu.mx` o `punto.@utt.edu.mx`. La validación fina la hace el backend con `@IsEmail`.
+2. **No impide cambiar el correo antes de verificarlo.** El trigger `prevent_user_email_change()` bloquea el cambio solo cuando `email_verified_at IS NOT NULL`. Antes de verificar, el usuario aún puede corregirlo.
+3. **No comprueba que el buzón exista.** La base valida el dominio y la verificación, pero no puede saber si el correo es real; eso lo confirma Firebase cuando el usuario abre el enlace.
 4. **No borra roles expirados.** Las consultas deben filtrar por `expires_at`.
 5. **No impide modificar o borrar la auditoría.** Hay que restringir privilegios.
 6. **No crea particiones mensuales.** Solo crea la partición por defecto.
-7. **No incluye los roles ni permisos iniciales.** Hay que insertarlos.
+7. **No siembra usuarios de prueba.** `002_seed_permissions.sql` crea los 10 permisos y los asigna a los 3 roles, pero no crea usuarios, departamentos ni asignaciones a personas.
 8. **No modela sesiones concurrentes.** El límite de dos sesiones del README se maneja en otra capa.
 9. **No incluye contraseñas.** Este módulo usa magic link + Firebase, no OTP con contraseña.
 10. **No incluye avisos, departamentos, chat ni archivos.** Es solo el módulo de identidad y auditoría.
-11. **No es idempotente.** Volver a ejecutar el script falla porque las tablas ya existen. En producción se usan migraciones versionadas.
+11. **No es idempotente en su totalidad.** `001_auth.sql` falla si se ejecuta dos veces porque las tablas ya existen; `002_seed_permissions.sql` sí es idempotente. En producción se usan migraciones versionadas.
 12. **No define permisos de usuario de base de datos.** El script asume que lo ejecuta un usuario con privilegios suficientes.
 
 ---
