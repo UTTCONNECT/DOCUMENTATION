@@ -1,0 +1,130 @@
+erDiagram
+    USER_STATUSES {
+        varchar code PK "pending | active | suspended | disabled"
+        varchar description
+    }
+
+    USERS {
+        uuid id PK "gen_random_uuid()"
+        citext email UK "inmutable si esta verificado"
+        varchar display_name
+        varchar status_code FK "-> user_statuses.code"
+        timestamptz email_verified_at
+        timestamptz last_login_at
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz deleted_at "borrado logico"
+    }
+
+    IDENTITY_PROVIDERS {
+        smallint id PK "GENERATED ALWAYS AS IDENTITY"
+        varchar code UK "firebase"
+        varchar description
+    }
+
+    USER_IDENTITIES {
+        uuid id PK
+        uuid user_id FK "-> users.id (CASCADE)"
+        smallint provider_id FK "-> identity_providers.id"
+        varchar provider_subject "UNIQUE con provider_id"
+        citext provider_email
+        jsonb claims_snapshot
+        timestamptz linked_at
+        timestamptz last_verified_at
+    }
+
+    ROLES {
+        uuid id PK
+        varchar code UK "lector | departamento | administrador"
+        varchar name
+        varchar description
+        boolean is_system
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    PERMISSIONS {
+        uuid id PK
+        varchar code UK
+        varchar description
+        timestamptz created_at
+    }
+
+    ROLE_PERMISSIONS {
+        uuid role_id PK,FK "-> roles.id (CASCADE)"
+        uuid permission_id PK,FK "-> permissions.id (CASCADE)"
+        timestamptz granted_at
+    }
+
+    USER_ROLES {
+        uuid user_id PK,FK "-> users.id (CASCADE)"
+        uuid role_id PK,FK "-> roles.id (RESTRICT)"
+        uuid granted_by FK "-> users.id (SET NULL)"
+        timestamptz granted_at
+        timestamptz expires_at
+    }
+
+    MAGIC_LINK_STATUSES {
+        varchar code PK "requested | sent | consumed | expired | invalid | failed | revoked"
+        varchar description
+        boolean is_terminal
+    }
+
+    MAGIC_LINK_REQUESTS {
+        uuid id PK
+        uuid user_id FK "-> users.id (SET NULL)"
+        citext email
+        varchar status_code FK "-> magic_link_statuses.code"
+        uuid correlation_id UK "trazabilidad end-to-end"
+        text continue_url
+        bytea client_nonce_hash
+        inet requested_ip
+        text user_agent
+        varchar firebase_event_id
+        timestamptz requested_at
+        timestamptz sent_at
+        timestamptz expires_at
+        timestamptz consumed_at
+        varchar failure_code
+        varchar failure_detail
+        jsonb metadata
+    }
+
+    AUDIT_EVENT_TYPES {
+        varchar code PK "auth.* | user.* | role.*"
+        varchar description
+    }
+
+    AUDIT_EVENTS {
+        timestamptz occurred_at PK "clave de particionamiento"
+        uuid id PK
+        varchar event_type_code FK "-> audit_event_types.code"
+        uuid actor_user_id FK "-> users.id (SET NULL)"
+        uuid subject_user_id FK "-> users.id (SET NULL)"
+        uuid magic_link_request_id FK "-> magic_link_requests.id (SET NULL)"
+        uuid correlation_id
+        varchar resource_type
+        varchar resource_id
+        inet source_ip
+        text user_agent
+        boolean succeeded
+        jsonb payload
+    }
+
+    USER_STATUSES ||--o{ USERS : "clasifica"
+    USERS ||--o{ USER_IDENTITIES : "vincula"
+    IDENTITY_PROVIDERS ||--o{ USER_IDENTITIES : "provee"
+
+    USERS ||--o{ MAGIC_LINK_REQUESTS : "solicita"
+    MAGIC_LINK_STATUSES ||--o{ MAGIC_LINK_REQUESTS : "estado"
+
+    USERS ||--o{ USER_ROLES : "tiene"
+    ROLES ||--o{ USER_ROLES : "asignado"
+    USERS o|--o{ USER_ROLES : "otorga"
+    ROLES ||--o{ ROLE_PERMISSIONS : "agrupa"
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : "incluida"
+
+    AUDIT_EVENT_TYPES ||--o{ AUDIT_EVENTS : "tipifica"
+    USERS o|--o{ AUDIT_EVENTS : "actor"
+    USERS o|--o{ AUDIT_EVENTS : "sujeto"
+    MAGIC_LINK_REQUESTS o|--o{ AUDIT_EVENTS : "origina"

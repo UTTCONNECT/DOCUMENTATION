@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MER · Módulo de Autenticación — UTT Connect</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #111c33;
+    --panel-2: #16233d;
+    --line: #24344f;
+    --text: #e6edf7;
+    --muted: #93a4bd;
+    --accent: #38bdf8;
+    --accent-2: #a78bfa;
+    --ok: #34d399;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: radial-gradient(1200px 700px at 15% -10%, #1b2b47 0%, var(--bg) 55%) fixed;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    padding: 18px 24px 12px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(8px);
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    font-weight: 650;
+    letter-spacing: 0.2px;
+  }
+  header h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(17, 28, 51, 0.6);
+  }
+  nav button {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--muted);
+    padding: 7px 13px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  nav button:hover { color: var(--text); border-color: #33507a; }
+  nav button.active {
+    color: #04121f;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-color: transparent;
+    font-weight: 650;
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    padding: 10px 24px;
+    position: absolute;
+    right: 12px;
+    top: 118px;
+    z-index: 5;
+  }
+  .toolbar button {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: rgba(17, 28, 51, 0.95);
+    color: var(--text);
+    font-size: 15px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+  .toolbar .wide { width: auto; padding: 0 12px; font-size: 12.5px; }
+  main {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-height: 420px;
+  }
+  #stage {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    cursor: grab;
+    padding: 24px;
+  }
+  #stage.dragging { cursor: grabbing; }
+  #canvas {
+    transform-origin: 0 0;
+    width: max-content;
+    margin: 0 auto;
+  }
+  #canvas svg { max-width: none !important; height: auto; display: block; }
+  .legend {
+    position: absolute;
+    left: 24px;
+    bottom: 16px;
+    z-index: 5;
+    display: flex;
+    gap: 18px;
+    font-size: 11.5px;
+    color: var(--muted);
+    background: rgba(17, 28, 51, 0.9);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 14px;
+    flex-wrap: wrap;
+    max-width: calc(100% - 48px);
+  }
+  .legend b { color: var(--text); font-weight: 600; }
+  .legend .k {
+    display: inline-block;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: #1f2f4d;
+    color: var(--accent);
+    font-family: Consolas, monospace;
+    margin-right: 4px;
+  }
+  #status {
+    position: fixed;
+    inset: 0;
+    display: none;
+    place-items: center;
+    background: rgba(9, 14, 26, 0.85);
+    z-index: 20;
+    text-align: center;
+    padding: 24px;
+  }
+  #status.show { display: grid; }
+  #status .box {
+    max-width: 560px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  #status h2 { color: var(--text); font-size: 15px; margin: 0 0 8px; }
+  pre#source {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 24px;
+    overflow: auto;
+    background: #0b1324;
+    color: #c8d6ec;
+    font: 12.5px/1.65 Consolas, "Cascadia Code", monospace;
+    display: none;
+  }
+  pre#source.show { display: block; }
+  footer {
+    padding: 10px 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11.5px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  @media print {
+    header, nav, .toolbar, .legend, footer { display: none; }
+    body { background: #fff; color: #000; }
+    #stage { position: static; overflow: visible; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>MER · <span>Módulo de Autenticación, Autorización y Auditoría</span></h1>
+  <p>UTT Connect · PostgreSQL 18 (15+) · modelo lógico derivado del script SQL</p>
+</header>
+
+<nav id="tabs"></nav>
+
+<div class="toolbar">
+  <button id="zoomIn" title="Acercar">+</button>
+  <button id="zoomOut" title="Alejar">−</button>
+  <button id="zoomFit" class="wide" title="Ajustar a la ventana">Ajustar</button>
+  <button id="reset" class="wide" title="Tamaño original 100%">100%</button>
+  <button id="downloadSvg" class="wide" title="Descargar SVG">SVG</button>
+  <button id="downloadPng" class="wide" title="Descargar PNG">PNG</button>
+  <button id="toggleSource" class="wide" title="Ver código Mermaid">Código</button>
+</div>
+
+<main>
+  <div id="stage"><div id="canvas"></div></div>
+  <pre id="source"></pre>
+  <div class="legend">
+    <span><b><span class="k">PK</span></b> Llave primaria</span>
+    <span><b><span class="k">FK</span></b> Llave foránea</span>
+    <span><b><span class="k">UK</span></b> Valor único</span>
+    <span><b>||</b> exactamente uno</span>
+    <span><b>o|</b> cero o uno</span>
+    <span><b>o{</b> cero o muchos</span>
+  </div>
+</main>
+
+<footer>
+  <span>Los índices, triggers, particiones y CHECK se documentan aparte: Mermaid solo dibuja tablas, columnas y relaciones.</span>
+  <span>Fuente: <code>docs/mer-autenticacion.mmd</code></span>
+</footer>
+
+<div id="status"><div class="box"><h2>No se pudo cargar Mermaid</h2>
+  <p>Este archivo necesita conexión a internet la primera vez para descargar la librería Mermaid desde el CDN.
+  Si estás sin conexión, abre <code>docs/mer-autenticacion.md</code> en un visor con soporte Mermaid (VS Code, GitHub o GitLab).</p>
+</div></div>
+
+<script type="module">
+const DIAGRAMS = {
+  general: `erDiagram
+    USER_STATUSES {
+        varchar code PK "pending | active | suspended | disabled"
+        varchar description
+    }
+    USERS {
+        uuid id PK "gen_random_uuid()"
+        citext email UK "inmutable si esta verificado"
+        varchar display_name
+        varchar status_code FK "-> user_statuses.code"
+        timestamptz email_verified_at
+        timestamptz last_login_at
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz deleted_at "borrado logico"
+    }
+    IDENTITY_PROVIDERS {
+        smallint id PK "GENERATED ALWAYS AS IDENTITY"
+        varchar code UK "firebase"
+        varchar description
+    }
+    USER_IDENTITIES {
+        uuid id PK
+        uuid user_id FK "-> users.id (CASCADE)"
+        smallint provider_id FK "-> identity_providers.id"
+        varchar provider_subject "UNIQUE con provider_id"
+        citext provider_email
+        jsonb claims_snapshot
+        timestamptz linked_at
+        timestamptz last_verified_at
+    }
+    ROLES {
+        uuid id PK
+        varchar code UK "lector | departamento | administrador"
+        varchar name
+        varchar description
+        boolean is_system
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    PERMISSIONS {
+        uuid id PK
+        varchar code UK
+        varchar description
+        timestamptz created_at
+    }
+    ROLE_PERMISSIONS {
+        uuid role_id PK,FK "-> roles.id (CASCADE)"
+        uuid permission_id PK,FK "-> permissions.id (CASCADE)"
+        timestamptz granted_at
+    }
+    USER_ROLES {
+        uuid user_id PK,FK "-> users.id (CASCADE)"
+        uuid role_id PK,FK "-> roles.id (RESTRICT)"
+        uuid granted_by FK "-> users.id (SET NULL)"
+        timestamptz granted_at
+        timestamptz expires_at
+    }
+    MAGIC_LINK_STATUSES {
+        varchar code PK "requested | sent | consumed | expired | invalid | failed | revoked"
+        varchar description
+        boolean is_terminal
+    }
+    MAGIC_LINK_REQUESTS {
+        uuid id PK
+        uuid user_id FK "-> users.id (SET NULL)"
+        citext email
+        varchar status_code FK "-> magic_link_statuses.code"
+        uuid correlation_id UK "trazabilidad end-to-end"
+        text continue_url
+        bytea client_nonce_hash
+        inet requested_ip
+        text user_agent
+        varchar firebase_event_id
+        timestamptz requested_at
+        timestamptz sent_at
+        timestamptz expires_at
+        timestamptz consumed_at
+        varchar failure_code
+        varchar failure_detail
+        jsonb metadata
+    }
+    AUDIT_EVENT_TYPES {
+        varchar code PK "auth.* | user.* | role.*"
+        varchar description
+    }
+    AUDIT_EVENTS {
+        timestamptz occurred_at PK "clave de particion"
+        uuid id PK
+        varchar event_type_code FK "-> audit_event_types.code"
+        uuid actor_user_id FK "-> users.id (SET NULL)"
+        uuid subject_user_id FK "-> users.id (SET NULL)"
+        uuid magic_link_request_id FK "-> magic_link_requests.id (SET NULL)"
+        uuid correlation_id
+        varchar resource_type
+        varchar resource_id
+        inet source_ip
+        text user_agent
+        boolean succeeded
+        jsonb payload
+    }
+    USER_STATUSES ||--o{ USERS : "clasifica"
+    USERS ||--o{ USER_IDENTITIES : "vincula"
+    IDENTITY_PROVIDERS ||--o{ USER_IDENTITIES : "provee"
+    USERS ||--o{ MAGIC_LINK_REQUESTS : "solicita"
+    MAGIC_LINK_STATUSES ||--o{ MAGIC_LINK_REQUESTS : "estado"
+    USERS ||--o{ USER_ROLES : "tiene"
+    ROLES ||--o{ USER_ROLES : "asignado"
+    USERS o|--o{ USER_ROLES : "otorga"
+    ROLES ||--o{ ROLE_PERMISSIONS : "agrupa"
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : "incluida"
+    AUDIT_EVENT_TYPES ||--o{ AUDIT_EVENTS : "tipifica"
+    USERS o|--o{ AUDIT_EVENTS : "actor"
+    USERS o|--o{ AUDIT_EVENTS : "sujeto"
+    MAGIC_LINK_REQUESTS o|--o{ AUDIT_EVENTS : "origina"`,
+
+  identidad: `erDiagram
+    USER_STATUSES ||--o{ USERS : clasifica
+    USERS ||--o{ USER_IDENTITIES : vincula
+    IDENTITY_PROVIDERS ||--o{ USER_IDENTITIES : provee
+    USERS ||--o{ MAGIC_LINK_REQUESTS : solicita
+    MAGIC_LINK_STATUSES ||--o{ MAGIC_LINK_REQUESTS : estado
+    USER_STATUSES {
+        varchar code PK
+        varchar description
+    }
+    USERS {
+        uuid id PK
+        citext email UK
+        varchar status_code FK
+        timestamptz email_verified_at
+        timestamptz last_login_at
+        timestamptz deleted_at
+    }
+    USER_IDENTITIES {
+        uuid id PK
+        uuid user_id FK
+        smallint provider_id FK
+        varchar provider_subject
+        jsonb claims_snapshot
+    }
+    IDENTITY_PROVIDERS {
+        smallint id PK
+        varchar code UK
+    }
+    MAGIC_LINK_STATUSES {
+        varchar code PK
+        boolean is_terminal
+    }
+    MAGIC_LINK_REQUESTS {
+        uuid id PK
+        uuid user_id FK
+        citext email
+        varchar status_code FK
+        uuid correlation_id UK
+        timestamptz expires_at
+        timestamptz consumed_at
+    }`,
+
+  rbac: `erDiagram
+    USERS ||--o{ USER_ROLES : tiene
+    ROLES ||--o{ USER_ROLES : asignado
+    USERS o|--o{ USER_ROLES : "otorga (granted_by)"
+    ROLES ||--o{ ROLE_PERMISSIONS : agrupa
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : incluida
+    USERS {
+        uuid id PK
+        citext email UK
+    }
+    ROLES {
+        uuid id PK
+        varchar code UK
+        boolean is_system
+    }
+    USER_ROLES {
+        uuid user_id PK,FK
+        uuid role_id PK,FK
+        uuid granted_by FK
+        timestamptz expires_at
+    }
+    PERMISSIONS {
+        uuid id PK
+        varchar code UK
+    }
+    ROLE_PERMISSIONS {
+        uuid role_id PK,FK
+        uuid permission_id PK,FK
+    }`,
+
+  auditoria: `erDiagram
+    AUDIT_EVENT_TYPES ||--o{ AUDIT_EVENTS : tipifica
+    USERS o|--o{ AUDIT_EVENTS : actor
+    USERS o|--o{ AUDIT_EVENTS : sujeto
+    MAGIC_LINK_REQUESTS o|--o{ AUDIT_EVENTS : origina
+    AUDIT_EVENT_TYPES {
+        varchar code PK
+        varchar description
+    }
+    AUDIT_EVENTS {
+        timestamptz occurred_at PK
+        uuid id PK
+        varchar event_type_code FK
+        uuid actor_user_id FK
+        uuid subject_user_id FK
+        uuid magic_link_request_id FK
+        uuid correlation_id
+        boolean succeeded
+        jsonb payload
+    }`
+};
+
+const LABELS = {
+  general: "General",
+  identidad: "Identidad",
+  rbac: "Autorización (RBAC)",
+  auditoria: "Auditoría"
+};
+
+const canvas = document.getElementById("canvas");
+const stage = document.getElementById("stage");
+const source = document.getElementById("source");
+const tabs = document.getElementById("tabs");
+
+let mermaid = null;
+let current = "general";
+let scale = 1;
+let svgMarkup = "";
+
+const themeVars = {
+  fontFamily: '"Segoe UI", system-ui, sans-serif',
+  fontSize: "13px",
+  background: "transparent",
+  primaryColor: "#16233d",
+  primaryTextColor: "#e6edf7",
+  primaryBorderColor: "#3b6ea5",
+  secondaryColor: "#1c2b47",
+  tertiaryColor: "#132038",
+  lineColor: "#5b7aa6",
+  textColor: "#dbe6f5",
+  mainBkg: "#16233d",
+  nodeBorder: "#3b6ea5",
+  clusterBkg: "#101a2e",
+  titleColor: "#e6edf7",
+  edgeLabelBackground: "#0f172a",
+  attributeBackgroundColorOdd: "#152340",
+  attributeBackgroundColorEven: "#111c33"
+};
+
+async function boot() {
+  try {
+    const mod = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    mermaid = mod.default;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      darkMode: true,
+      themeVariables: themeVars,
+      er: { diagramPadding: 18, layoutDirection: "TB", minEntityWidth: 100, entityPadding: 14, useMaxWidth: false }
+    });
+    await render(current);
+  } catch (err) {
+    document.getElementById("status").classList.add("show");
+    console.error(err);
+  }
+}
+
+async function render(key) {
+  if (!mermaid) return;
+  current = key;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.key === key));
+  source.textContent = DIAGRAMS[key];
+  const svg = await mermaid.render("mer-" + key + "-" + Date.now(), DIAGRAMS[key]);
+  svgMarkup = svg.svg;
+  canvas.innerHTML = svgMarkup;
+  const el = canvas.querySelector("svg");
+  if (el) {
+    el.removeAttribute("height");
+    el.style.maxWidth = "none";
+  }
+  scale = 1;
+  applyScale();
+  requestAnimationFrame(() => { fit(); });
+}
+
+function applyScale() {
+  canvas.style.transform = "scale(" + scale + ")";
+}
+
+function fit() {
+  const svg = canvas.querySelector("svg");
+  if (!svg) return;
+  const box = svg.getBoundingClientRect();
+  const baseW = box.width / scale;
+  const baseH = box.height / scale;
+  const availW = stage.clientWidth - 48;
+  const availH = stage.clientHeight - 80;
+  if (!baseW || !baseH) return;
+  scale = Math.min(1.15, availW / baseW, availH / baseH);
+  applyScale();
+  stage.scrollTop = 0;
+  stage.scrollLeft = 0;
+}
+
+for (const key of Object.keys(DIAGRAMS)) {
+  const b = document.createElement("button");
+  b.textContent = LABELS[key];
+  b.dataset.key = key;
+  b.addEventListener("click", () => {
+    source.classList.remove("show");
+    render(key);
+  });
+  tabs.appendChild(b);
+}
+
+document.getElementById("zoomIn").onclick = () => { scale = Math.min(3, scale + 0.15); applyScale(); };
+document.getElementById("zoomOut").onclick = () => { scale = Math.max(0.2, scale - 0.15); applyScale(); };
+document.getElementById("zoomFit").onclick = () => fit();
+document.getElementById("reset").onclick = () => { scale = 1; applyScale(); };
+
+document.getElementById("toggleSource").onclick = () => {
+  source.classList.toggle("show");
+};
+
+document.getElementById("downloadSvg").onclick = () => {
+  if (!svgMarkup) return;
+  const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mer-" + current + ".svg";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+document.getElementById("downloadPng").onclick = () => {
+  const svg = canvas.querySelector("svg");
+  if (!svg) return;
+  const clone = svg.cloneNode(true);
+  const vb = svg.viewBox.baseVal;
+  const w = vb && vb.width ? vb.width : svg.getBoundingClientRect().width;
+  const h = vb && vb.height ? vb.height : svg.getBoundingClientRect().height;
+  clone.setAttribute("width", w * 2);
+  clone.setAttribute("height", h * 2);
+  const xml = new XMLSerializer().serializeToString(clone);
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas");
+    c.width = w * 2;
+    c.height = h * 2;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0);
+    const a = document.createElement("a");
+    a.href = c.toDataURL("image/png");
+    a.download = "mer-" + current + ".png";
+    a.click();
+  };
+  img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(xml)));
+};
+
+// Arrastrar para desplazar
+let drag = null;
+stage.addEventListener("pointerdown", e => {
+  if (e.target.closest("button")) return;
+  drag = { x: e.clientX, y: e.clientY, top: stage.scrollTop, left: stage.scrollLeft };
+  stage.classList.add("dragging");
+  stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener("pointermove", e => {
+  if (!drag) return;
+  stage.scrollTop = drag.top - (e.clientY - drag.y);
+  stage.scrollLeft = drag.left - (e.clientX - drag.x);
+});
+stage.addEventListener("pointerup", () => { drag = null; stage.classList.remove("dragging"); });
+
+window.addEventListener("resize", () => { /* el usuario conserva su zoom */ });
+
+boot();
+</script>
+</body>
+</html>
